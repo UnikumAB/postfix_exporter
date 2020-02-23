@@ -33,12 +33,14 @@ func TestPostfixExporter_CollectFromLogline(t *testing.T) {
 		smtpdSASLAuthenticationFailures prometheus.Counter
 		smtpdTLSConnects                *prometheus.CounterVec
 		unsupportedLogEntries           *prometheus.CounterVec
+		postscreenRejects               *prometheus.CounterVec
 	}
 	type args struct {
-		line            []string
-		removedCount    int
-		saslFailedCount int
-		outgoingTLS     int
+		line              []string
+		removedCount      int
+		saslFailedCount   int
+		outgoingTLS       int
+		postscreenRejects int
 	}
 	tests := []struct {
 		name   string
@@ -135,6 +137,25 @@ func TestPostfixExporter_CollectFromLogline(t *testing.T) {
 				smtpTLSConnects:       prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"Verified", "TLSv1.2", "ECDHE-RSA-AES256-GCM-SHA384", "256", "256"}),
 			},
 		},
+		{
+			name: "Issue #36",
+			args: args{
+				line: []string{
+					"Feb 22 03:18:19 <hostname> postfix/postscreen[1234]: WHITELISTED [1.2.3.4]:12345",
+					"Feb 22 03:20:57 <hostname> postfix/postscreen[1234]: NOQUEUE: reject: RCPT from [1.2.3.4]:12345: 550 5.7.1 Service unavailable; client [<spammers ip>] blocked using DNSBL Filters; from=<fromaddr>, to=<toaddr>, proto=ESMTP, helo=<smtp.aweia.cn>",
+					"Nov 22 16:03:56 siren postfix/postscreen[8266]: NOQUEUE: reject: RCPT from [209.85.160.43]:45612: 450 4.3.2 Service currently unavailable; from=account@gmail.com, to=user@abc.com, proto=ESMTP, helo=<mail-pl0-f43.google.com>",
+				},
+				removedCount:      0,
+				saslFailedCount:   0,
+				outgoingTLS:       0,
+				postscreenRejects: 2,
+			},
+			fields: fields{
+				unsupportedLogEntries: prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"process"}),
+				smtpTLSConnects:       prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"Verified", "TLSv1.2", "ECDHE-RSA-AES256-GCM-SHA384", "256", "256"}),
+				postscreenRejects:     prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"code"}),
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,6 +183,7 @@ func TestPostfixExporter_CollectFromLogline(t *testing.T) {
 				smtpdSASLAuthenticationFailures: tt.fields.smtpdSASLAuthenticationFailures,
 				smtpdTLSConnects:                tt.fields.smtpdTLSConnects,
 				unsupportedLogEntries:           tt.fields.unsupportedLogEntries,
+				postscreenRejects:               tt.fields.postscreenRejects,
 				logUnsupportedLines:             true,
 			}
 			for _, line := range tt.args.line {
@@ -170,6 +192,7 @@ func TestPostfixExporter_CollectFromLogline(t *testing.T) {
 			assertCounterEquals(t, e.qmgrRemoves, tt.args.removedCount, "Wrong number of lines counted")
 			assertCounterEquals(t, e.smtpdSASLAuthenticationFailures, tt.args.saslFailedCount, "Wrong number of Sasl counter counted")
 			assertCounterVecEquals(t, e.smtpTLSConnects, tt.args.outgoingTLS, "Wrong number of TLS connections counted")
+			assertCounterVecEquals(t, e.postscreenRejects, tt.args.postscreenRejects, "Wrong number of messages rejected")
 		})
 	}
 }

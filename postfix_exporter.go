@@ -70,6 +70,7 @@ type PostfixExporter struct {
 	unsupportedLogEntries           *prometheus.CounterVec
 	smtpStatusDeferred              prometheus.Counter
 	opendkimSignatureAdded          *prometheus.CounterVec
+	postscreenRejects               *prometheus.CounterVec
 }
 
 // CollectShowqFromReader parses the output of Postfix's 'showq' command
@@ -283,6 +284,7 @@ var (
 	smtpdSASLAuthenticationFailuresLine = regexp.MustCompile(`^warning: \S+: SASL \S+ authentication failed: `)
 	smtpdTLSLine                        = regexp.MustCompile(`^(\S+) TLS connection established from \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)$`)
 	opendkimSignatureAdded              = regexp.MustCompile(`^[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)$`)
+	postscreenRejectsLine               = regexp.MustCompile(`^NOQUEUE: reject: RCPT from \S+:\d+: ([0-9]+) `)
 )
 
 // CollectFromLogline collects metrict from a Postfix log line.
@@ -375,6 +377,11 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 			} else {
 				e.addToUnsupportedLine(line, subprocess)
 			}
+		case "postscreen":
+			if postscreenRejectsMatches := postscreenRejectsLine.FindStringSubmatch(remainder); postscreenRejectsMatches != nil {
+				e.postscreenRejects.WithLabelValues(postscreenRejectsMatches[1]).Inc()
+			}
+			log.Print(remainder)
 		default:
 			e.addToUnsupportedLine(line, subprocess)
 		}
@@ -597,6 +604,14 @@ func NewPostfixExporter(showqPath string, logfilePath string, journal *Journal, 
 			},
 			[]string{"subject", "domain"},
 		),
+		postscreenRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "postfix",
+				Name:      "postscreen_messages_rejected_total",
+				Help:      "Total number of NOQUEUE rejects by postScreen.",
+			},
+			[]string{"code"},
+		),
 	}, nil
 }
 
@@ -710,4 +725,5 @@ func (e *PostfixExporter) Collect(ch chan<- prometheus.Metric) {
 	e.unsupportedLogEntries.Collect(ch)
 	ch <- e.smtpConnectionTimedOut
 	e.opendkimSignatureAdded.Collect(ch)
+	e.postscreenRejects.Collect(ch)
 }
